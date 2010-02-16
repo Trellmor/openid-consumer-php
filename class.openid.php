@@ -227,7 +227,8 @@ class OpenID {
     		preg_match_all('/<meta[^>]*http-equiv=[\'"]X-XRDS-Location[\'"][^>]*content=[\'"]([^\'"]+)[\'"][^>]*\/?>/i', $body, $matches1);
 			preg_match_all('/<meta[^>]*content=\'"([^\'"]+)[\'"][^>]*http-equiv=[\'"]X-XRDS-Location[\'"][^>]*\/?>/i', $body, $matches2);
     		$matches = array_merge($matches1[1], $matches2[1]);
-    		$xrds = trim($matches[0]);
+    		$xrds = '';
+    		if (count($matches)) $xrds = trim($matches[0]);
     	}
     	
     	if (empty($xrds)) {
