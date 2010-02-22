@@ -1,5 +1,12 @@
 <?php
 
+/**
+ * This is an example on how to use OpenID extensions with the OpenID class
+ * 
+ * The setup is pretty much the same as with an regular login, but befor we 
+ * redirect the user we set additional parameters
+ */
+
 error_reporting(E_ALL);
 
 require_once('class.openid.php');
@@ -28,9 +35,19 @@ if (isset($_POST['openid_identifier'])) {
 	// Optional, set authentification realm, see http://openid.net/specs/openid-authentication-2_0.html#realms
 	$oid->SetRealm('http://' . $_SERVER['HTTP_HOST'] . dirname($_SERVER['PHP_SELF']));
 	
+	// Setup Attribute eXchange (AX) extension
+	// See http://openid.net/specs/openid-attribute-exchange-1_0.html
+	// See http://code.google.com/apis/accounts/docs/OpenID.html
+	$oid->SetParameter('openid.ns.ax', 'http://openid.net/srv/ax/1.0');
+	$oid->SetParameter('openid.ax.mode', 'fetch_request');
+	$oid->SetParameter('openid.ax.required', 'email,firstname');
+	$oid->SetParameter('openid.ax.type.email', 'http://axschema.org/contact/email');
+	$oid->SetParameter('openid.ax.type.firstname', 'http://axschema.org/namePerson/first');
+	
 	// Redirect user to OP
 	// You can also use OpenID::GetRequestAuthentificationURL() and redirect the user yourself
-	$oid->RedirectUser();
+	echo $oid->GetRequestAuthentificationURL();
+	//$oid->RedirectUser();
 	
 } elseif($oid->IsResponse()) {
 	// We got a reply from an openid provider
@@ -41,8 +58,11 @@ if (isset($_POST['openid_identifier'])) {
 		// Login successfull, now verify the login
 		try {
 			if($oid->VerifyAssertion()) {
-				// Now start a session for the user, save to DB or whatever
-				echo "Login successful";
+				// Find out which namespace was used
+				$ns = $oid->GetNamespace('http://openid.net/srv/ax/1.0');
+				echo "Login successful<br />";
+				echo 'First name: ' . $oid->GetParameter('openid.' . $ns . '.value.firstname') . '<br />';
+				echo 'eMail: ' . $oid->GetParameter('openid.' . $ns . '.value.email');
 			} else {
 				echo "Login failed";
 			}
@@ -65,7 +85,7 @@ if (isset($_POST['openid_identifier'])) {
 		<title>OpenID Example Login</title>
 	</head>
 	<body>
-		<form action="example.php" method="post">
+		<form action="example_extension.php" method="post">
 		OpenID Identifier: <input type="text" name="openid_identifier" /><br />
 		<input type="submit" name="submit" value="Login" />
 		</form>

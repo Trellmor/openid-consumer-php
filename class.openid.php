@@ -4,7 +4,7 @@
  * 
  * A simple class to handle OpenID 2.0 logins
  * @author Daniel Triendl <daniel@pew.cc>
- * @version 0.1.0 $Id$
+ * @version 0.2.0 $Id$
  * @package login
  * @license http://opensource.org/licenses/lgpl-3.0.html
  */
@@ -42,12 +42,14 @@ class OpenIDException extends Exception {};
  * @subpackage openid
  */
 class OpenID {
+	// The openid_* stuff should be merged into openid_parameters in the future
 	protected	$openid_identifier;
 	protected	$openid_identifier_type;
 	protected	$openid_endpoint;
 	protected	$openid_return_to;
 	protected	$openid_realm;
 	private		$user_agent					= 'Mozilla/5.0 (compatible; trell_openid; http://dev.pew.cc/wiki/openid)';
+	protected	$openid_parameters			= array();
 	
 	/**
 	 * Check if required extensions are loaded and initialize some data if
@@ -71,6 +73,7 @@ class OpenID {
 				if (!empty($_GET['openid_identity'])) $this->openid_identifier = $this->NormalizeIdentifier(urldecode($_GET['openid_identity']));
 				if (!empty($_GET['openid_claimed_id'])) $this->openid_identifier = $this->NormalizeIdentifier(urldecode($_GET['openid_claimed_id']));
 				if (!empty($_GET['openid_return_to'])) $this->openid_return_to = urldecode($_GET['openid_return_to']);
+				$this->ParseQuery();
 			}
 		}
 	}
@@ -125,9 +128,37 @@ class OpenID {
 		$this->openid_return_to = $return_to;
 	}
 	
+	/**
+	 * Set the OpenID realm, see http://openid.net/specs/openid-authentication-2_0.html#realms
+	 *
+	 * @param	string		$realm
+	 */
 	public function SetRealm($realm)
 	{
 		$this->openid_realm = $realm;
+	}
+	
+	/**
+	 * Set a parameter
+	 *
+	 * @param	string		$parameter
+	 * @param	string		$value
+	 */
+	public function SetParameter($parameter, $value)
+	{
+		$this->openid_parameters[$parameter] = $value;
+	}
+	
+	/**
+	 * Get the value of a parameter if available
+	 *
+	 * @param	string		$parameter
+	 * @return	string						The value or empty if not set
+	 */
+	public function GetParameter($parameter)
+	{
+		if (isset($this->openid_parameters[$parameter])) return $this->openid_parameters[$parameter];
+		else return '';
 	}
 	
 	/**
@@ -140,17 +171,22 @@ class OpenID {
 		$url = parse_url($this->openid_endpoint);
 		
 		$url['query'] = (empty($url['query'])) ? '' : $url['query'] . '&';
-		
-		$url['query'] .= 'openid.ns=' . urlencode('http://specs.openid.net/auth/2.0') . '&';
-		$url['query'] .= 'openid.mode=checkid_setup&';
+		// Generate openid_parameters array from values
+		$this->SetParameter('openid.ns', 'http://specs.openid.net/auth/2.0');
+		if ($this->GetParameter('openid.mode') == '') $this->SetParameter('openid.mode', 'checkid_setup');
 		
 		if (empty($this->openid_identifier)) throw new OpenIDException('OpenID Identifier not set.');
 		
-		$url['query'] .= 'openid.identity=' . urlencode($this->openid_identifier) . '&';
-		$url['query'] .= 'openid.claimed_id=' . urlencode($this->openid_identifier) . '&';
+		$this->SetParameter('openid.identity', $this->openid_identifier);
+		$this->SetParameter('openid.claimed_id', $this->openid_identifier);
 		
-		if (!empty($this->openid_return_to)) $url['query'] .= 'openid.return_to=' . urlencode($this->openid_return_to) . '&';
-		if (!empty($this->openid_realm)) $url['query'] .= 'openid.realm=' . urlencode($this->openid_realm) . '&';
+		if (!empty($this->openid_return_to)) $this->SetParameter('openid.return_to', $this->openid_return_to);
+		if (!empty($this->openid_realm)) $this->SetParameter('openid.realm', $this->openid_realm);
+		
+		// Generate query from parameters
+		foreach ($this->openid_parameters as $k => $v) {
+			$url['query'] .= $k . '=' . urlencode($v) . '&';
+		}
 		
 		$url['path'] = (empty($url['path'])) ? '/' : $url['path']; 
 		return $url['scheme'] . '://' . $url['host'] . $url['path'] . '?' . $url['query'];
@@ -206,15 +242,16 @@ class OpenID {
 		curl_setopt($c, CURLOPT_SSL_VERIFYPEER, false);
 		curl_setopt($c, CURLOPT_TIMEOUT, 5);
 		curl_setopt($c, CURLOPT_USERAGENT, $this->user_agent);
+		curl_setopt($c, CURLOPT_FOLLOWLOCATION, true);
+		curl_setopt($c, CURLOPT_MAXREDIRS, 10);
 		curl_setopt($c, CURLOPT_HTTPHEADER, array(
         	'Accept: application/xrds+xml',
     	));
 
     	$data = curl_exec($c);
-    	$data = explode("\r\n\r\n", $data);
-		$head = $data[0];
-		unset($data[0]);
-		$body = implode("\r\n\r\n", $data);
+    	$head = explode("\r\n\r\n", trim(substr($data, 0, curl_getinfo($c, CURLINFO_HEADER_SIZE))));
+    	$head = $head[count($head) - 1];
+		$body = substr($data, curl_getinfo($c, CURLINFO_HEADER_SIZE));
     	
 		if (preg_match('/Content-Type: application\/xrds\+xml/', $head)) {
 			// If it's a Yadis document, return it
@@ -250,44 +287,42 @@ class OpenID {
 	 * Parses and XRDS document and returns and OpenID 2.0 Endpoint if found
 	 *
 	 * @param	string		$xrds			XRDS document
+	 * @param	bool		$op_identifier	Accept http://specs.openid.net/auth/2.0/server Type too
 	 * @return	string						OpenID 2.0 Endpoint
 	 */
 	protected function DiscoverEndpointFromXRDS($xrds)
 	{
 		$xml = new SimpleXMLElement($xrds);
-		
+
 		$xrd = $xml->XRD[count($xml->XRD)-1];
 
 		$endpoint = '';
 		
 		// Search for OP Identifier, see http://openid.net/specs/openid-authentication-2_0.html 7.3.2.1.1
-		/*foreach($xrd->Service as $service) {
+		foreach($xrd->Service as $service) {
 			foreach ($service->Type as $type) {
 				if ($type == 'http://specs.openid.net/auth/2.0/server') {
 					if (isset($service->URI)) {
-						$endpoint = (string)$service->URI;
-						break;
+						// This is for OP Identifier, in this case use http://specs.openid.net/auth/2.0/identifier_select as identity
+						$this->SetIdentifier('http://specs.openid.net/auth/2.0/identifier_select');
+						return (string)$service->URI;
 					}
 				}
 			}
-			if (!empty($endpoint)) break;
-		}*/
+		}
 		
 		// Search for claimed identifier, see http://openid.net/specs/openid-authentication-2_0.html 7.3.2.1.2
 		foreach($xrd->Service as $service) {
 			foreach ($service->Type as $type) {
 				if ($type == 'http://specs.openid.net/auth/2.0/signon') {
 					if (isset($service->URI)) {
-						$endpoint = (string)$service->URI;
-						break;
+						return (string)$service->URI;
 					}
 				}
 			}
-			if (!empty($endpoint)) break;
 		}
 		
 		if (empty($endpoint)) throw new OpenIDException('No OpenID 2.0 Endpoint found.');
-		return $endpoint;
 	}
 	
 	/**
@@ -303,6 +338,8 @@ class OpenID {
 		curl_setopt($c, CURLOPT_SSL_VERIFYPEER, false);
 		curl_setopt($c, CURLOPT_TIMEOUT, 5);
 		curl_setopt($c, CURLOPT_USERAGENT, $this->user_agent);
+		curl_setopt($c, CURLOPT_FOLLOWLOCATION, true);
+		curl_setopt($c, CURLOPT_MAXREDIRS, 10);
 
 		$data = curl_exec($c);
 		curl_close($c);
@@ -377,6 +414,7 @@ class OpenID {
 		if (!$this->VerifyURL($this->openid_return_to)) throw new OpenIDException('openid.return URL didn\'t match.');
 		
 		// Check if OP is authorized to make assertions about this user
+		// If this is not empty, assume that the value is from a previous lookup and correct
 		if (empty($this->openid_endpoint)) {
 			$this->DiscoverEndpoint();
 		}
@@ -384,14 +422,8 @@ class OpenID {
 			throw new OpenIDException('Endpoint didn\'t match discovered endpoint.');
 		}
 		
-		$post = array();
-		foreach ($_GET as $k => $v) {
-			if (substr($k, 0, 7) == 'openid_') {
-				$post[str_replace('openid_', 'openid.', $k)] = $v;
-			}
-		}
+		$post = $this->openid_parameters;
 		$post['openid.mode'] = 'check_authentication';
-		
 		$c = curl_init($this->openid_endpoint);
 		curl_setopt($c, CURLOPT_HEADER, false);
 		curl_setopt($c, CURLOPT_POST, true);
@@ -499,6 +531,45 @@ class OpenID {
 		if (!$this->IsResponse()) throw new OpenIDException('No server response found.');
 		if (empty($_GET['openid_mode'])) throw new OpenIDException('openid.mode not found in server response, maybe the server implementation is faulty?');
 		return $_GET['openid_mode'];
+	}
+	
+	/**
+	 * Parse the QUERY_STRING parameter to get the correct array indices
+	 *
+	 */
+	protected function ParseQuery()
+	{
+		if (!$this->IsResponse()) throw new OpenIDException('No server response found.');
+		
+		$query = explode('&', $_SERVER['QUERY_STRING']);
+		foreach ($query as $q) {
+			$q = explode('=', $q);
+			$k = $q[0];
+			if (substr($k, 0, 7) == 'openid.') {
+				unset($q[0]);
+				$v = urldecode(implode('=', $q));
+				$this->openid_parameters[$k] = $v;
+			}
+		}
+	}
+	
+	/**
+	 * Get the namespace for an extension uri
+	 *
+	 * @param	string		$uri
+	 * @return	string						The namespace
+	 */
+	public function GetNamespace($uri)
+	{
+		foreach ($this->openid_parameters as $k => $v) {
+			if (substr($k, 0, 10) == 'openid.ns.') {
+				
+				if ($v == $uri) {
+					return substr($k, 10);
+				}
+			}
+		}
+		throw new OpenIDException('Namepspace not found.');
 	}
 }
 
