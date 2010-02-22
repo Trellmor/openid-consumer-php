@@ -35,7 +35,7 @@ if (isset($_POST['openid_identifier'])) {
 } elseif($oid->IsResponse()) {
 	// We got a reply from an openid provider
 	
-	// Geht the openid.mode and check if it is id_res (i.e. successful login)
+	// Get the openid.mode and check if it is id_res (i.e. successful login)
 	$mode = $oid->GetResponseMode();
 	if ($mode == 'id_res') {
 		// Login successfull, now verify the login

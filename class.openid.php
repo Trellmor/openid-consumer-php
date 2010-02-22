@@ -242,7 +242,8 @@ class OpenID {
 		curl_setopt($c, CURLOPT_SSL_VERIFYPEER, false);
 		curl_setopt($c, CURLOPT_TIMEOUT, 5);
 		curl_setopt($c, CURLOPT_USERAGENT, $this->user_agent);
-		curl_setopt($c, CURLOPT_FOLLOWLOCATION, true);
+		// Ignore warnings about safe mode and/or open basedir
+		@curl_setopt($c, CURLOPT_FOLLOWLOCATION, true);
 		curl_setopt($c, CURLOPT_MAXREDIRS, 10);
 		curl_setopt($c, CURLOPT_HTTPHEADER, array(
         	'Accept: application/xrds+xml',
@@ -338,7 +339,8 @@ class OpenID {
 		curl_setopt($c, CURLOPT_SSL_VERIFYPEER, false);
 		curl_setopt($c, CURLOPT_TIMEOUT, 5);
 		curl_setopt($c, CURLOPT_USERAGENT, $this->user_agent);
-		curl_setopt($c, CURLOPT_FOLLOWLOCATION, true);
+		// Ignore warnings about safe mode and/or open basedir
+		@curl_setopt($c, CURLOPT_FOLLOWLOCATION, true);
 		curl_setopt($c, CURLOPT_MAXREDIRS, 10);
 
 		$data = curl_exec($c);
