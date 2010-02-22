@@ -221,10 +221,11 @@ class OpenID {
 		// If it's an url, use Yadis to find the Endpoint, if that fails, use HTML discovery
 		if ($this->openid_identifier_type == 'url') {
 			try {
-				$xrds = $this->DiscoverXRDSByYadis();
+				$xrds = $this->DiscoverXRDSByYadis($this->openid_identifier);
 				$this->openid_endpoint = $this->DiscoverEndpointFromXRDS($xrds);
 			} catch (OpenIDException $e) {
-				$this->openid_endpoint = $this->DiscoverEndpointFromHTML();
+				throw new OpenIDException($e->getMessage());
+				$this->openid_endpoint = $this->DiscoverEndpointFromHTML($this->openid_identifier);
 			}
 		}
 	}
@@ -233,10 +234,12 @@ class OpenID {
 	 * Try to discover and OpenID Endpoint by using the Yadis protocol
 	 * See http://yadis.org/wiki/Yadis_1.0_(HTML)
 	 *
+	 * @param	string		$url
+	 * @return	string						XRDS document
 	 */
-	protected function DiscoverXRDSByYadis()
+	protected function DiscoverXRDSByYadis($url)
 	{
-		$c = curl_init($this->openid_identifier);
+		$c = curl_init($url);
 		curl_setopt($c, CURLOPT_HEADER, true);
 		curl_setopt($c, CURLOPT_RETURNTRANSFER, true);
 		curl_setopt($c, CURLOPT_SSL_VERIFYPEER, false);
@@ -248,11 +251,44 @@ class OpenID {
 		curl_setopt($c, CURLOPT_HTTPHEADER, array(
         	'Accept: application/xrds+xml',
     	));
-
+   	
     	$data = curl_exec($c);
     	$head = explode("\r\n\r\n", trim(substr($data, 0, curl_getinfo($c, CURLINFO_HEADER_SIZE))));
     	$head = $head[count($head) - 1];
 		$body = substr($data, curl_getinfo($c, CURLINFO_HEADER_SIZE));
+    	
+    	// cURL is not following redirects because of safe_mode or open_basedir
+    	if (ini_get('safe_mode') || ini_get('open_basedir')) {
+    		if (curl_getinfo($c, CURLINFO_HTTP_CODE) == 301 || curl_getinfo($c, CURLINFO_HTTP_CODE) == 302) {
+	    		static $count = 0;
+	    		
+	    		if ($count > 10) {
+	    			$count = 0;
+	    			throw new OpenIDException('Maximum redirection count reached.');
+	    		}
+	    		
+				$matches = array();
+				preg_match('/Location:(.*?)\n/', $head, $matches);
+				$url = @parse_url(trim(array_pop($matches)));
+				if (!$url) {
+					//couldn't process the url to redirect to
+					$count = 0;
+					throw new OpenIDException('Coudn\t process the url to redirect to.');
+				}
+				
+				$last_url = parse_url(curl_getinfo($c, CURLINFO_EFFECTIVE_URL));
+				
+				if (empty($url['scheme'])) $url['scheme'] = $last_url['scheme'];
+				if (strtolower($url['scheme']) != 'http' && strtolower($url['scheme']) != 'https') throw new OpenIDException('Invalid redirection target.');
+				if (empty($url['host'])) $url['host'] = $last_url['host'];
+				if (empty($url['path'])) $url['path'] = $last_url['path'];
+				
+				$new_url = $url['scheme'] . '://' . $url['host'] . $url['path'] . (!empty($url['query']) ? '?' . $url['query'] : '');
+				
+				$count++;
+				return $this->DiscoverXRDSByYadis($new_url);
+    		}
+    	}
     	
 		if (preg_match('/Content-Type: application\/xrds\+xml/', $head)) {
 			// If it's a Yadis document, return it
@@ -334,7 +370,7 @@ class OpenID {
 	protected function DiscoverEndpointFromHTML()
 	{
 		$c = curl_init($this->openid_identifier);
-		curl_setopt($c, CURLOPT_HEADER, false);
+		curl_setopt($c, CURLOPT_HEADER, true);
 		curl_setopt($c, CURLOPT_RETURNTRANSFER, true);
 		curl_setopt($c, CURLOPT_SSL_VERIFYPEER, false);
 		curl_setopt($c, CURLOPT_TIMEOUT, 5);
@@ -344,6 +380,43 @@ class OpenID {
 		curl_setopt($c, CURLOPT_MAXREDIRS, 10);
 
 		$data = curl_exec($c);
+    	$head = explode("\r\n\r\n", trim(substr($data, 0, curl_getinfo($c, CURLINFO_HEADER_SIZE))));
+    	$head = $head[count($head) - 1];
+		$data = substr($data, curl_getinfo($c, CURLINFO_HEADER_SIZE));
+    	
+    	// cURL is not following redirects because of safe_mode or open_basedir
+    	if (ini_get('safe_mode') || ini_get('open_basedir')) {
+    		if (curl_getinfo($c, CURLINFO_HTTP_CODE) == 301 || curl_getinfo($c, CURLINFO_HTTP_CODE) == 302) {
+	    		static $count = 0;
+	    		
+	    		if ($count > 10) {
+	    			$count = 0;
+	    			throw new OpenIDException('Maximum redirection count reached.');
+	    		}
+	    		
+				$matches = array();
+				preg_match('/Location:(.*?)\n/', $head, $matches);
+				$url = @parse_url(trim(array_pop($matches)));
+				if (!$url) {
+					//couldn't process the url to redirect to
+					$count = 0;
+					throw new OpenIDException('Coudn\t process the url to redirect to.');
+				}
+				
+				$last_url = parse_url(curl_getinfo($c, CURLINFO_EFFECTIVE_URL));
+				
+				if (empty($url['scheme'])) $url['scheme'] = $last_url['scheme'];
+				if (strtolower($url['scheme']) != 'http' && strtolower($url['scheme']) != 'https') throw new OpenIDException('Invalid redirection target.');
+				if (empty($url['host'])) $url['host'] = $last_url['host'];
+				if (empty($url['path'])) $url['path'] = $last_url['path'];
+				
+				$new_url = $url['scheme'] . '://' . $url['host'] . $url['path'] . (!empty($url['query']) ? '?' . $url['query'] : '');
+				
+				$count++;
+				return $this->DiscoverEndpointFromHTML($new_url);
+    		}
+    	}
+		
 		curl_close($c);
 		
 		preg_match_all('/<link[^>]*rel=[\'"]openid2.provider[\'"][^>]*href=[\'"]([^\'"]+)[\'"][^>]*\/?>/i', $data, $matches1);
